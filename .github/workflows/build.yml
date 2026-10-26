@@ -1,7 +1,7 @@
 # GitHub Action Machine — User Project Build Runner
 # Author: KingBrezz
-# Triggered via workflow_dispatch from the GTM Worker API.
-# This workflow does NOT run on every push of the GTM repo itself.
+# Cloudflare-free mode: run manually from GitHub Actions.
+# Put a project ZIP inside the repository (for example incoming/source.zip) first.
 
 name: GTM User Build
 
@@ -12,9 +12,10 @@ on:
         description: 'GTM Build ID'
         required: true
         type: string
-      source_key:
-        description: 'R2 object key for source ZIP'
+      source_path:
+        description: 'Path to project ZIP inside this repository (example: incoming/source.zip)'
         required: true
+        default: 'incoming/source.zip'
         type: string
       profile:
         description: 'Build profile (auto, node, java-gradle, ...)'
@@ -49,14 +50,12 @@ jobs:
       BUILD_ID: ${{ inputs.build_id }}
       PROFILE: ${{ inputs.profile }}
       CUSTOM_COMMAND: ${{ inputs.custom_command }}
-      SOURCE_KEY: ${{ inputs.source_key }}
+      SOURCE_PATH: ${{ inputs.source_path }}
     steps:
-      - name: Checkout runner helpers
+      - name: Checkout runner repository
         uses: actions/checkout@v4
         with:
-          sparse-checkout: |
-            scripts
-          sparse-checkout-cone-mode: false
+          persist-credentials: false
 
       - name: Setup workspace
         run: |
@@ -64,27 +63,28 @@ jobs:
           echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
           echo "Workspace ready for build $BUILD_ID"
 
-      # Source download: in production the Worker provides a short-lived signed URL
-      # via a secret or the workflow uses a dedicated download step.
-      # Here we document the expected interface; operators must wire R2 signed URL or
-      # a private download endpoint protected by ADMIN_API_KEY.
-      - name: Download source ZIP
-        env:
-          DOWNLOAD_URL: ${{ secrets.GTM_SOURCE_DOWNLOAD_BASE }}
-          ADMIN_KEY: ${{ secrets.GTM_ADMIN_API_KEY }}
+      # Cloudflare-free source input: ZIP must already exist in this repository.
+      # For safety, do not place secrets inside the source ZIP.
+      - name: Load source ZIP from repository
         run: |
           set -euo pipefail
-          if [ -z "${DOWNLOAD_URL:-}" ]; then
-            echo "::warning::GTM_SOURCE_DOWNLOAD_BASE secret not set. Skipping real download."
-            echo "UNSUPPORTED: source download not configured" > "$HOME/gtm-work/out/status.txt"
-            echo "unsupported" > "$HOME/gtm-work/out/conclusion.txt"
-            exit 0
+          ZIP_PATH="$GITHUB_WORKSPACE/$SOURCE_PATH"
+          if [ ! -f "$ZIP_PATH" ]; then
+            echo "Source ZIP not found: $SOURCE_PATH"
+            echo "Place your project ZIP in the repository, commit it, and rerun this workflow."
+            exit 1
           fi
-          curl -fsSL -H "X-Admin-Key: ${ADMIN_KEY:-}" \
-            "${DOWNLOAD_URL%/}/internal/source?key=${SOURCE_KEY}&build_id=${BUILD_ID}" \
-            -o "$HOME/gtm-work/source.zip"
-          unzip -q "$HOME/gtm-work/source.zip" -d "$HOME/gtm-work/src"
-          echo "Source extracted"
+          mkdir -p "$HOME/gtm-work/src"
+          unzip -q "$ZIP_PATH" -d "$HOME/gtm-work/src"
+          # Handle ZIPs that contain a single top-level project directory.
+          mapfile -t TOP_ITEMS < <(find "$HOME/gtm-work/src" -mindepth 1 -maxdepth 1 -print)
+          if [ "${#TOP_ITEMS[@]}" -eq 1 ] && [ -d "${TOP_ITEMS[0]}" ]; then
+            INNER="${TOP_ITEMS[0]}"
+            shopt -s dotglob
+            mv "$INNER"/* "$HOME/gtm-work/src/" 2>/dev/null || true
+            rmdir "$INNER" 2>/dev/null || true
+          fi
+          echo "Source extracted from repository ZIP"
 
       - name: Detect project & build
         working-directory: ${{ runner.temp }}
