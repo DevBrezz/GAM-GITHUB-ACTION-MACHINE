@@ -113,34 +113,40 @@ async function handleCreateBuild(request: Request, env: Env, ctx: ExecutionConte
   const metaRaw = form.get('meta')
   const meta = parseMeta(typeof metaRaw === 'string' ? metaRaw : null)
 
-  // FormDataEntryValue is string | File; narrow by type instead of relying on
-  // a global File constructor, which is not available in every Workers type lib.
   if (file === null || typeof file === 'string') {
     return error('Missing file field', 400, 'MISSING_FILE')
   }
 
+  // Some Cloudflare Workers type-library versions narrow FormDataEntryValue
+  // to never. Cast only after rejecting null/string values.
+  const uploadFile = file as unknown as {
+    name: string
+    size: number
+    arrayBuffer: () => Promise<ArrayBuffer>
+  }
+
   const max = maxUpload(env)
-  if (file.size > max) {
+  if (uploadFile.size > max) {
     return error(`File exceeds limit of ${max} bytes`, 413, 'FILE_TOO_LARGE')
   }
 
-  const buf = await file.arrayBuffer()
+  const buf = await uploadFile.arrayBuffer()
   const validation = await validateZipBasic(buf, max)
   if (!validation.ok) {
     return error(validation.reason || 'Invalid ZIP', 400, 'INVALID_ZIP')
   }
 
   const buildId = generateBuildId()
-  const sourceKey = `sources/${buildId}/${file.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
+  const sourceKey = `sources/${buildId}/${uploadFile.name.replace(/[^a-zA-Z0-9._-]/g, '_')}`
   await env.ARTIFACTS.put(sourceKey, buf, {
     httpMetadata: { contentType: 'application/zip' },
-    customMetadata: { buildId, originalName: file.name },
+    customMetadata: { buildId, originalName: uploadFile.name },
   })
 
   const record: BuildRecord = {
     id: buildId,
     status: 'queued',
-    projectName: meta.fileName || file.name,
+    projectName: meta.fileName || uploadFile.name,
     profile: meta.profile || 'auto',
     command: meta.customCommand,
     createdAt: new Date().toISOString(),
