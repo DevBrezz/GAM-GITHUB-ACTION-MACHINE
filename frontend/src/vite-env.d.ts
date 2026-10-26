@@ -1,19 +1,15 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+/// <reference types="vite/client" />
 
-export default defineConfig({
-  plugins: [react()],
-  base: process.env.VITE_BASE_PATH || '/',
-  resolve: {
-    alias: {
-      '@': '/src',
-    },
-  },
-  server: {
-    port: 5173,
-  },
-  build: {
-    outDir: 'dist',
-    sourcemap: true,
-  },
-})
+interface ImportMetaEnv {
+  readonly BASE_URL: string
+  readonly DEV: boolean
+  readonly PROD: boolean
+  readonly MODE: string
+  readonly SSR: boolean
+  readonly VITE_BASE_PATH?: string
+  readonly VITE_API_BASE_URL?: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}
