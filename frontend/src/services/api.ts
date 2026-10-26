@@ -154,14 +154,31 @@ function toBuild(run: GitHubRun): Build {
 async function getRuns(): Promise<GitHubRun[]> {
   const config = requireConfig()
   const response = await gh<{ workflow_runs: GitHubRun[] }>(`${repoPath(config)}/actions/workflows/${WORKFLOW}/runs?per_page=100`)
-  return response.workflow_runs.filter((run) => (run.display_title || run.name || '').startsWith('GTM Build '))
+  // GitHub's display_title is normally the configured run-name, while name may
+  // fall back to the workflow name. Keep GTM runs and any exact ID match.
+  return response.workflow_runs.filter((run) => {
+    const title = run.display_title || ''
+    const name = run.name || ''
+    return title.startsWith('GTM Build ') || title.includes('gtm-') || name.startsWith('GTM Build ')
+  })
 }
 
+const wait = (ms: number) => new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+
 async function findRun(id: string) {
-  const runs = await getRuns()
-  const run = runs.find((item) => buildIdFromRun(item) === id || String(item.id) === id)
-  if (!run) throw new Error(`Build ${id} was not found yet. Refresh in a few seconds if it was just started.`)
-  return run
+  // workflow_dispatch returns HTTP 204 and does not return the new run ID.
+  // Give GitHub a short window to publish the new run before showing an error.
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const runs = await getRuns()
+    const run = runs.find((item) => {
+      const title = item.display_title || ''
+      const name = item.name || ''
+      return buildIdFromRun(item) === id || String(item.id) === id || title.includes(id) || name.includes(id)
+    })
+    if (run) return run
+    if (attempt < 5) await wait(2000)
+  }
+  throw new Error(`GitHub Actions has not exposed build ${id} yet. Open the runner repository → Actions and check whether “GTM User Build” started. If no run exists, verify that build.yml is on the configured branch and workflow_dispatch is enabled.`)
 }
 
 function bytesToBase64(buffer: ArrayBuffer) {
