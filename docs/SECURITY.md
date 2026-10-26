@@ -2,38 +2,35 @@
 
 Author: KingBrezz
 
-## Threat model (summary)
+## Direct GitHub Actions mode
 
-Users upload arbitrary source code that is executed on **GitHub-hosted runners**. Those runners are not a hardened multi-tenant sandbox for hostile code.
+The frontend talks directly to GitHub REST API. The operator enters a fine-grained Personal Access Token, held in JavaScript memory only. GTM does not save the token to localStorage or send it to a GTM backend. Browser reload clears it. Repository owner/name/branch are saved locally, but they are not credentials.
 
-### Risks
+Required token scope: restrict it to one **private runner repository** with **Actions: Read and write** and **Contents: Read and write**. Do not grant administration, secrets, deployments, or workflow-edit permissions. Metadata read-only is normally automatic.
 
-- Malicious code in uploaded ZIP (crypto miners, data exfiltration from runner env, supply-chain tricks).
-- ZIP bombs / path traversal.
-- Abuse of GitHub Actions minutes / rate limits.
-- Token theft if secrets are over-scoped or leaked into logs.
-- Unauthorized download of other users’ artifacts if IDs are guessable and auth is missing.
+## Source upload flow
 
-### Controls implemented in code
+1. GTM creates a temporary branch in the private runner repository.
+2. The source ZIP is uploaded to that branch using the GitHub Contents API.
+3. GTM dispatches the trusted `build.yml` workflow on the configured runner branch.
+4. The workflow checks out the temporary source branch and extracts the ZIP on a GitHub-hosted runner.
+5. A separate cleanup job attempts to delete the temporary branch after the build finishes.
 
-- ZIP magic + size limit + basic path-traversal string rejection.
-- Build IDs are 128-bit random hex.
-- Secrets never shipped to frontend.
-- Optional `ADMIN_API_KEY` for internal callback.
-- Minimal workflow permissions (`contents: read`, `actions: read`).
-- Concurrency group per build id.
+The runner repository must be private. Branch deletion does not guarantee immediate secure erasure from GitHub's underlying object storage. Avoid uploading secrets inside source ZIPs.
 
-### Required before public production
+## Risks and limitations
 
-- Authentication (OAuth / API keys per user).
-- Per-user quotas and rate limits.
-- CAPTCHA or similar for anonymous traffic.
-- Private R2 with short-lived signed URLs only.
-- Review GitHub token scopes (prefer GitHub App with least privilege).
-- Do **not** claim the platform is safe for open anonymous use solely because HTTPS is enabled.
+- Uploaded source code and custom commands are executed on a GitHub-hosted runner. This is not a hardened multi-tenant sandbox for hostile code.
+- A malicious project may attempt to steal runtime credentials or abuse runner resources. Never build unknown code using an account/token that can access sensitive repositories.
+- Anyone able to use the connected browser tab may be able to use the in-memory token through GTM. Disconnect when finished and close the tab on shared devices.
+- GitHub Actions minutes, repository policies, API rate limits, and artifact retention apply.
+- ZIP path traversal is checked before extraction, but this is not a comprehensive malware scanner or ZIP-bomb defense.
+- The direct browser upload implementation caps ZIP size at 20 MB to avoid very large base64 API requests.
 
-### Status
+## Not supported
 
-**NOT PRODUCTION READY** for public unauthenticated use.
+- Anonymous public uploads / public multi-tenant access.
+- Production-grade isolation for arbitrary untrusted source code.
+- Cloudflare Worker, R2, KV, or a shared server-side API in direct mode.
 
-Authentication and isolation: **NOT CONFIGURED** / partial.
+**Status: NOT PRODUCTION READY for public anonymous use.** Live integration still requires testing with a real private runner repository and restricted token.

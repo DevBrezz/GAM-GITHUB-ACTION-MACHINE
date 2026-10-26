@@ -1,55 +1,28 @@
-# Installation — GitHub Action Machine (GTM)
-
-Author: KingBrezz
-
-## Prerequisites
-
-- Node.js 20+
-- npm 10+
-- Cloudflare account (for Worker, R2, KV)
-- GitHub account and a repository that will host `build.yml`
-- GitHub PAT with `actions:write` and `actions:read` (and `repo` if private)
-
-## Clone
-
-```bash
-git clone <your-fork-or-upload>
-cd GTM
-```
+# Installation
 
 ## Frontend
+
+Requirements: Node.js 20+.
 
 ```bash
 cd frontend
 npm install
-cp ../.env.example .env.local
-# Edit VITE_API_BASE_URL
 npm run dev
+npm run build
 ```
 
-## Worker
+No `VITE_API_BASE_URL` is needed. `VITE_BASE_PATH` is only for the GitHub Pages URL path.
 
-```bash
-cd worker
-npm install
-npx wrangler login
-# Edit wrangler.toml: uncomment and set R2 + KV bindings
-npx wrangler secret put GITHUB_TOKEN
-npx wrangler secret put GITHUB_OWNER
-npx wrangler secret put GITHUB_REPO
-# Optional:
-npx wrangler secret put ADMIN_API_KEY
-npx wrangler dev
-```
+## GitHub Actions build engine
 
-## Environment
+1. Create a separate private repository for builds.
+2. Copy `.github/workflows/build.yml` from GTM to the private repository and push it to the default branch.
+3. Create a fine-grained PAT restricted to that repository with **Actions: Read and write** and **Contents: Read and write**.
+4. Open GTM Settings, enter the runner repository owner/name/branch and the PAT, then click **Connect & Test**.
+5. Use New Build to upload a ZIP (20 MB maximum).
 
-See root `.env.example` for all variables.
+No Cloudflare account, Worker, R2, KV, or Vite API URL is required.
 
-## Local verification without cloud
+## Token handling
 
-Frontend typecheck and build can run offline after `npm install`.
-
-Worker typecheck requires `@cloudflare/workers-types` after `npm install`.
-
-Full end-to-end (upload → dispatch → runner → artifact) is **BLOCKED BY ENVIRONMENT** until Cloudflare and GitHub credentials are provided.
+The token is kept in JavaScript memory only, never in localStorage. It is lost when the page reloads. Use a private runner repository and a token scoped to that repository only. Do not publish this setup as anonymous public upload service.

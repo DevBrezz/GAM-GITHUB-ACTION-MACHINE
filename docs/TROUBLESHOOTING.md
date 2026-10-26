@@ -1,37 +1,13 @@
-# Troubleshooting — GTM
+# Troubleshooting
 
-Author: KingBrezz
+- **Token rejected (401):** create a new fine-grained token and check expiry.
+- **403 / Resource not accessible by personal access token:** verify the token is restricted to the private runner repository and has Actions read/write plus Contents read/write.
+- **404 repository/workflow:** owner/repo/branch are incorrect, the repository is inaccessible to the token, or `.github/workflows/build.yml` is not on the configured branch/default branch.
+- **Build never appears:** open Actions in the private runner repository and check whether `GTM User Build` was dispatched.
+- **Source ZIP missing:** verify the token has Contents write and the temporary branch upload completed.
+- **Artifact unavailable:** GitHub Actions artifacts expire after 7 days in this workflow; inspect the run for upload warnings.
+- **Build failed:** open the GitHub Actions run for canonical logs. Toolchain versions and project-specific dependencies may require adapting the workflow.
+- **Token disappears after reload:** expected behavior. GTM deliberately does not persist the token; reconnect in Settings.
+- **ZIP larger than 20 MB:** this direct browser-to-GitHub implementation rejects it to avoid very large base64 API requests. Split/reduce the project or extend the upload transport deliberately.
 
-## Backend shows NOT CONFIGURED
-
-Worker health reports `github: false` or `r2: false` / `kv: false`.
-
-→ Bind R2 and KV in `wrangler.toml` and set secrets with `wrangler secret put`.
-
-## Workflow dispatch fails (HTTP 404/401)
-
-- Workflow file must exist on the default branch as `build.yml`.
-- Token must have `actions:write`.
-- Owner/repo names must match.
-
-## Logs say “Waiting for runner logs”
-
-- Run may still be queued.
-- Or token cannot download logs.
-- Open the GitHub Actions run URL from the build detail page.
-
-## Concurrent builds mixed up
-
-Run association falls back to “recent workflow_dispatch” when the run title does not contain the build id. Prefer unique titles and avoid high concurrency until improved correlation is added.
-
-## Frontend cannot reach API
-
-- CORS / `ALLOWED_ORIGINS`
-- Wrong `VITE_API_BASE_URL`
-- Mixed content (HTTPS page → HTTP API)
-
-## Artifact download 404
-
-- Callback never registered artifacts.
-- Retention expired.
-- R2 key missing.
+GTM does not use Cloudflare Worker, R2, KV, or `VITE_API_BASE_URL` in direct GitHub mode.

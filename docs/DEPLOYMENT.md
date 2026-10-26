@@ -1,37 +1,36 @@
-# Deployment — GitHub Action Machine (GTM)
+# GTM Deployment — Direct GitHub Actions Mode
 
-Author: KingBrezz
+GTM is a static GitHub Pages frontend. It uses GitHub's REST API directly and does not require a Worker, R2, KV, or `VITE_API_BASE_URL`.
 
-## Cloudflare-free build mode (GitHub Actions only)
+## 1. Create a private runner repository
 
-This mode runs builds directly from GitHub Actions and does not require Cloudflare Workers, R2, KV, or a GitHub PAT for the build itself. It is a manual runner workflow, not a connected web dashboard.
+Create a separate private repository (example: `gtm-build-runner`). Copy `.github/workflows/build.yml` from the GTM repository into the private repository at the same path and push it to the repository's default branch. Enable GitHub Actions for this repository.
 
-1. Push the GTM repository to `DevBrezz/GAM-GITHUB-ACTION-MACHINE` (or the repository you use as the runner).
-2. Create an `incoming/` folder in that repository and put the project ZIP at `incoming/source.zip`. Commit and push it.
-3. Open **Actions → GTM User Build → Run workflow**.
-4. Set `build_id` to a unique label, such as `build-001`.
-5. Set `source_path` to `incoming/source.zip`. Select a profile or leave it as `auto`, then run the workflow.
-6. Open the completed workflow run and download the `gtm-<build_id>` artifact. Build logs are available in the run log and the uploaded artifact.
+Do not use a public repository for the runner: source ZIPs are temporarily stored on a per-build branch.
 
-The ZIP must contain the project source, not another ZIP. Do not include API keys, passwords, or other secrets in the ZIP. Because the ZIP is committed to the repository, use a private repository for private source and remove the ZIP after the build if it should not remain in Git history.
+## 2. Create a restricted token
 
-### Token guidance
+Create a fine-grained Personal Access Token restricted to that private runner repository only. Grant:
 
-For this manual workflow, you do **not** need the fine-grained PAT you created. GitHub Actions runs the workflow within the repository. Never put a PAT in frontend code or commit it to the repository. If you later add an external backend that dispatches workflows through the GitHub API, store its PAT as a backend secret and grant only the required repository permissions.
+- **Actions: Read and write** — dispatch workflows, read runs, cancel runs, and retrieve run information.
+- **Contents: Read and write** — create temporary source branches and upload the ZIP.
+- **Metadata: Read-only** — normally selected automatically.
 
-### Dashboard limitation
+Do not grant administration, secrets, deployments, or workflow-edit permissions. The UI does not need permission to edit workflow files. Never use a broad classic PAT for a public dashboard.
 
-The current React frontend calls an API at `VITE_API_BASE_URL` (default `/api`). GitHub Pages is static and cannot safely store a PAT or accept uploads and dispatch workflows on its own. Therefore, this GitHub-only mode does not make the dashboard upload/status/log pages work end-to-end. A separate backend or a redesign that uses GitHub-native manual workflow runs is required for that integration.
+## 3. Connect from GTM
 
-## GitHub Pages frontend (optional)
+Open GTM → Settings. Enter owner, private runner repository name, its default branch, and the token. Click **Connect & Test**. The token stays in browser memory only and is cleared on reload. The owner/repository/branch settings are stored locally; no token is stored there.
 
-The frontend can be built as a static site, but API-dependent features remain unavailable without a backend. For project pages, set `VITE_BASE_PATH=/GAM-GITHUB-ACTION-MACHINE/` before building if using that repository name.
+## 4. Build
 
-## Status
+Upload a ZIP no larger than 20 MB. GTM creates a temporary branch, uploads `source.zip`, then dispatches `build.yml` on the configured branch. The workflow checks out the temporary source branch, validates ZIP paths, extracts the project, builds it on `ubuntu-latest`, uploads logs/artifacts as a GitHub Actions artifact, and attempts to delete the temporary source branch.
 
-| Item | Status |
-|---|---|
-| Manual ZIP-based build through GitHub Actions | Implemented in workflow; live run not tested here |
-| Artifact upload to GitHub Actions | Implemented by workflow |
-| Dashboard upload/status/log integration without backend | NOT SUPPORTED |
-| Cloudflare deployment | Not required for manual mode |
+Artifacts are retained for 7 days. Open the Actions tab in the private runner repository if you need the canonical run/log view.
+
+## Limitations
+
+- This is an operator/admin dashboard, not a public multi-tenant service. Anyone with access to the browser while connected could use the in-memory token.
+- The source branch is deleted after the run, but deletion does not guarantee immediate secure erasure of Git objects.
+- User code and custom commands run on GitHub-hosted runners. Treat input as untrusted; do not build unknown code using a token with access to sensitive repositories.
+- GitHub Actions quotas, policy, and billing apply. A successful frontend build does not prove a live GitHub integration works.
