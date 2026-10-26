@@ -3,6 +3,7 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
+  // GitHub Pages project-site path; can be overridden for local/other deployments.
   base: process.env.VITE_BASE_PATH || '/',
   resolve: {
     alias: {
@@ -20,6 +21,6 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    sourcemap: false,
   },
 })
