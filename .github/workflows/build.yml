@@ -1,9 +1,7 @@
-# GitHub Action Machine — User Project Build Runner
-# Author: KingBrezz
-# Cloudflare-free mode: run manually from GitHub Actions.
-# Put a project ZIP inside the repository (for example incoming/source.zip) first.
-
+# GitHub Action Machine (GTM) — direct GitHub Actions build engine.
+# The source upload lives on a temporary branch in a PRIVATE runner repository.
 name: GTM User Build
+run-name: GTM Build ${{ inputs.build_id }}
 
 on:
   workflow_dispatch:
@@ -12,24 +10,23 @@ on:
         description: 'GTM Build ID'
         required: true
         type: string
-      source_path:
-        description: 'Path to project ZIP inside this repository (example: incoming/source.zip)'
+      source_ref:
+        description: 'Temporary private branch containing source.zip'
         required: true
-        default: 'incoming/source.zip'
         type: string
       profile:
         description: 'Build profile (auto, node, java-gradle, ...)'
-        required: false
+        required: true
         default: 'auto'
         type: string
       custom_command:
-        description: 'Optional custom build command'
+        description: 'Optional build command (runs as untrusted code)'
         required: false
         default: ''
         type: string
       timeout_minutes:
-        description: 'Timeout minutes'
-        required: false
+        description: 'Timeout minutes (5–120)'
+        required: true
         default: '30'
         type: string
 
@@ -50,213 +47,140 @@ jobs:
       BUILD_ID: ${{ inputs.build_id }}
       PROFILE: ${{ inputs.profile }}
       CUSTOM_COMMAND: ${{ inputs.custom_command }}
-      SOURCE_PATH: ${{ inputs.source_path }}
+      WORK: ${{ runner.temp }}/gtm-work
     steps:
-      - name: Checkout runner repository
+      - name: Checkout trusted runner repository
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Setup workspace
-        run: |
-          mkdir -p "$HOME/gtm-work/src" "$HOME/gtm-work/out"
-          echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
-          echo "Workspace ready for build $BUILD_ID"
+      - name: Checkout temporary source branch
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          path: gtm-source-upload
+          persist-credentials: false
 
-      # Cloudflare-free source input: ZIP must already exist in this repository.
-      # For safety, do not place secrets inside the source ZIP.
-      - name: Load source ZIP from repository
+      - name: Validate and extract source ZIP
+        shell: bash
         run: |
           set -euo pipefail
-          ZIP_PATH="$GITHUB_WORKSPACE/$SOURCE_PATH"
-          if [ ! -f "$ZIP_PATH" ]; then
-            echo "Source ZIP not found: $SOURCE_PATH"
-            echo "Place your project ZIP in the repository, commit it, and rerun this workflow."
-            exit 1
+          mkdir -p "$WORK/src" "$WORK/out/artifacts"
+          test -f "gtm-source-upload/source.zip" || { echo "Source ZIP missing from temporary branch"; exit 1; }
+          # Reject unsafe archive paths before extraction.
+          if unzip -Z1 "gtm-source-upload/source.zip" | grep -E '(^/|(^|/)\.\.(/|$))'; then
+            echo "Unsafe path found in ZIP; refusing extraction"; exit 1
           fi
-          mkdir -p "$HOME/gtm-work/src"
-          unzip -q "$ZIP_PATH" -d "$HOME/gtm-work/src"
-          # Handle ZIPs that contain a single top-level project directory.
-          mapfile -t TOP_ITEMS < <(find "$HOME/gtm-work/src" -mindepth 1 -maxdepth 1 -print)
-          if [ "${#TOP_ITEMS[@]}" -eq 1 ] && [ -d "${TOP_ITEMS[0]}" ]; then
-            INNER="${TOP_ITEMS[0]}"
-            shopt -s dotglob
-            mv "$INNER"/* "$HOME/gtm-work/src/" 2>/dev/null || true
-            rmdir "$INNER" 2>/dev/null || true
-          fi
-          echo "Source extracted from repository ZIP"
+          unzip -q "gtm-source-upload/source.zip" -d "$WORK/src"
+          echo "Source extracted to temporary runner workspace."
 
-      - name: Detect project & build
-        working-directory: ${{ runner.temp }}
+      - name: Detect project and run build
+        shell: bash
         run: |
-          set -euo pipefail
-          SRC="$HOME/gtm-work/src"
-          OUT="$HOME/gtm-work/out"
-          mkdir -p "$OUT"
-          cd "$SRC" || { echo "No source directory"; echo "failure" > "$OUT/conclusion.txt"; exit 1; }
+          set -uo pipefail
+          SRC="$WORK/src"
+          OUT="$WORK/out"
+          cd "$SRC"
 
           detect() {
-            if [ -f "gradlew" ] || [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
-              if [ -d "app" ] && grep -q "com.android" build.gradle* 2>/dev/null; then
-                echo "android"
-              else
-                echo "java-gradle"
+            if [ -f gradlew ] || [ -f build.gradle ] || [ -f build.gradle.kts ]; then
+              if [ -f settings.gradle ] || [ -f settings.gradle.kts ]; then
+                grep -Rqs 'com.android.application\|com.android.library' --include='*.gradle' --include='*.gradle.kts' . && { echo android; return; }
               fi
-            elif [ -f "pom.xml" ] || [ -f "mvnw" ]; then
-              echo "java-maven"
-            elif [ -f "package.json" ]; then
-              echo "node"
-            elif [ -f "go.mod" ]; then
-              echo "go"
-            elif [ -f "Cargo.toml" ]; then
-              echo "rust"
-            elif [ -f "pyproject.toml" ] || [ -f "requirements.txt" ] || [ -f "setup.py" ]; then
-              echo "python"
-            elif [ -f "composer.json" ]; then
-              echo "php"
-            elif ls *.sln *.csproj 1>/dev/null 2>&1; then
-              echo "dotnet"
-            elif [ -f "CMakeLists.txt" ] || [ -f "Makefile" ]; then
-              echo "cmake"
-            else
-              echo "unknown"
-            fi
+              echo java-gradle
+            elif [ -f pom.xml ] || [ -f mvnw ]; then echo java-maven
+            elif [ -f package.json ]; then echo node
+            elif [ -f go.mod ]; then echo go
+            elif [ -f Cargo.toml ]; then echo rust
+            elif [ -f pyproject.toml ] || [ -f requirements.txt ] || [ -f setup.py ]; then echo python
+            elif [ -f composer.json ]; then echo php
+            elif compgen -G '*.sln' >/dev/null || compgen -G '*.csproj' >/dev/null; then echo dotnet
+            elif [ -f CMakeLists.txt ] || [ -f Makefile ]; then echo cmake
+            else echo unknown; fi
           }
 
-          DETECTED=$(detect)
-          if [ "$PROFILE" != "auto" ] && [ -n "$PROFILE" ]; then
-            DETECTED="$PROFILE"
-          fi
-          echo "project_type=$DETECTED" >> "$OUT/meta.env"
-          echo "Detected: $DETECTED"
-
+          DETECTED="$(detect)"
+          if [ "$PROFILE" != auto ]; then DETECTED="$PROFILE"; fi
+          echo "Detected project profile: $DETECTED"
+          printf 'project_type=%s\n' "$DETECTED" > "$OUT/meta.env"
           run_build() {
             local cmd="$1"
-            echo "Running: $cmd"
-            echo "command=$cmd" >> "$OUT/meta.env"
+            echo "$ $cmd"
             set +e
-            bash -lc "$cmd" 2>&1 | tee "$OUT/build.log"
+            bash -lc "$cmd" 2>&1 | tee -a "$OUT/build.log"
             local ec=${PIPESTATUS[0]}
             set -e
             echo "$ec" > "$OUT/exit_code.txt"
-            return $ec
+            return "$ec"
           }
 
           SUCCESS=0
+          if [ -n "$CUSTOM_COMMAND" ]; then
+            run_build "$CUSTOM_COMMAND" || SUCCESS=$?
+          else
           case "$DETECTED" in
             node)
-              if [ -f "pnpm-lock.yaml" ]; then
-                corepack enable && corepack prepare pnpm@latest --activate
-                run_build "pnpm install --frozen-lockfile && pnpm run build" || SUCCESS=$?
-              elif [ -f "yarn.lock" ]; then
-                corepack enable
-                run_build "yarn install --frozen-lockfile && yarn build" || SUCCESS=$?
-              else
-                run_build "npm ci || npm install; npm run build --if-present" || SUCCESS=$?
-              fi
-              ;;
+              if [ -f pnpm-lock.yaml ]; then corepack enable && corepack prepare pnpm@latest --activate && run_build 'pnpm install --frozen-lockfile && pnpm run build' || SUCCESS=$?
+              elif [ -f yarn.lock ]; then corepack enable && run_build 'yarn install --frozen-lockfile && yarn build' || SUCCESS=$?
+              else run_build 'npm ci || npm install; npm run build --if-present' || SUCCESS=$?; fi ;;
             java-gradle|android)
               chmod +x gradlew 2>/dev/null || true
-              if [ -n "${CUSTOM_COMMAND:-}" ]; then
-                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
-              else
-                run_build "./gradlew --no-daemon build" || SUCCESS=$?
-              fi
-              ;;
+              if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build './gradlew --no-daemon build' || SUCCESS=$?; fi ;;
             java-maven)
-              if [ -n "${CUSTOM_COMMAND:-}" ]; then
-                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
-              else
-                run_build "mvn -B -DskipTests package" || SUCCESS=$?
-              fi
-              ;;
+              if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'mvn -B -DskipTests package' || SUCCESS=$?; fi ;;
             python)
-              run_build "python3 -m pip install -U pip; [ -f requirements.txt ] && pip install -r requirements.txt; [ -f pyproject.toml ] && pip install . || true; python3 -m compileall -q ." || SUCCESS=$?
-              ;;
-            go)
-              run_build "go build -o $OUT/bin ./..." || SUCCESS=$?
-              ;;
-            rust)
-              run_build "cargo build --release" || SUCCESS=$?
-              ;;
-            php)
-              run_build "composer install --no-interaction --prefer-dist && composer test --if-present || true" || SUCCESS=$?
-              ;;
-            dotnet)
-              run_build "dotnet restore && dotnet build -c Release" || SUCCESS=$?
-              ;;
-            cmake)
-              run_build "mkdir -p build && cd build && cmake .. && cmake --build ." || SUCCESS=$?
-              ;;
-            custom)
-              if [ -z "${CUSTOM_COMMAND:-}" ]; then
-                echo "custom profile requires custom_command"
-                SUCCESS=1
-              else
-                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
-              fi
-              ;;
-            unknown|*)
-              if [ -n "${CUSTOM_COMMAND:-}" ]; then
-                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
-              else
-                echo "UNSUPPORTED_PROJECT: could not detect toolchain and no custom command"
-                echo "unsupported" > "$OUT/conclusion.txt"
-                exit 0
-              fi
-              ;;
+              if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'python3 -m pip install -U pip && if [ -f requirements.txt ]; then pip install -r requirements.txt; fi && python3 -m compileall -q .' || SUCCESS=$?; fi ;;
+            go) if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'go build ./...' || SUCCESS=$?; fi ;;
+            rust) if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'cargo build --release' || SUCCESS=$?; fi ;;
+            php) if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'composer install --no-interaction --prefer-dist' || SUCCESS=$?; fi ;;
+            dotnet) if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'dotnet restore && dotnet build -c Release' || SUCCESS=$?; fi ;;
+            cmake) if [ -n "$CUSTOM_COMMAND" ]; then run_build "$CUSTOM_COMMAND" || SUCCESS=$?; else run_build 'cmake -S . -B build && cmake --build build --config Release' || SUCCESS=$?; fi ;;
+            custom) if [ -z "$CUSTOM_COMMAND" ]; then echo 'Custom profile requires a build command.' | tee -a "$OUT/build.log"; SUCCESS=1; else run_build "$CUSTOM_COMMAND" || SUCCESS=$?; fi ;;
+            *) echo "Unsupported project profile: $DETECTED. Choose a supported profile or provide a custom command." | tee -a "$OUT/build.log"; SUCCESS=2 ;;
           esac
-
-          if [ $SUCCESS -eq 0 ]; then
-            echo "success" > "$OUT/conclusion.txt"
-          else
-            echo "failure" > "$OUT/conclusion.txt"
           fi
-          echo "Exit code: $SUCCESS"
+          echo "$SUCCESS" > "$OUT/exit_code.txt"
+          if [ "$SUCCESS" -eq 0 ]; then echo success > "$OUT/conclusion.txt"; else echo failure > "$OUT/conclusion.txt"; fi
+          exit "$SUCCESS"
 
       - name: Collect artifacts
         if: always()
+        shell: bash
         run: |
-          set -euo pipefail
-          OUT="$HOME/gtm-work/out"
-          SRC="$HOME/gtm-work/src"
+          set -uo pipefail
+          SRC="$WORK/src"
+          OUT="$WORK/out"
           mkdir -p "$OUT/artifacts"
-          # Common patterns
-          find "$SRC" -type f \( \
-            -name "*.jar" -o -name "*.war" -o -name "*.apk" -o -name "*.aab" \
-            -o -name "*.whl" -o -name "*.tar.gz" -o -name "*.tgz" \
-            -o -name "*.exe" -o -name "*.dll" -o -name "*.so" \
-            -o -name "*.zip" \
-          \) ! -path "*/node_modules/*" ! -path "*/.git/*" 2>/dev/null | head -50 | while read -r f; do
-            cp -n "$f" "$OUT/artifacts/" 2>/dev/null || true
-          done
-          # Node dist
-          if [ -d "$SRC/dist" ]; then
-            tar -czf "$OUT/artifacts/dist.tar.gz" -C "$SRC" dist || true
-          fi
-          ls -la "$OUT/artifacts" || true
-          echo "Artifacts staged"
+          find "$SRC" -type f \( -name '*.jar' -o -name '*.war' -o -name '*.apk' -o -name '*.aab' -o -name '*.whl' -o -name '*.tar.gz' -o -name '*.tgz' -o -name '*.exe' -o -name '*.dll' -o -name '*.so' -o -name '*.zip' \) ! -path '*/node_modules/*' ! -path '*/.git/*' 2>/dev/null | head -50 | while IFS= read -r f; do cp -n "$f" "$OUT/artifacts/" 2>/dev/null || true; done
+          if [ -d "$SRC/dist" ]; then tar -czf "$OUT/artifacts/dist.tar.gz" -C "$SRC" dist || true; fi
+          find "$OUT" -maxdepth 2 -type f -printf '%p (%s bytes)\n' || true
 
-      - name: Upload artifacts to GitHub Actions
+      - name: Upload build outputs as GitHub Actions artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: gtm-${{ inputs.build_id }}
-          path: |
-            ${{ runner.temp }}/../gtm-work/out/**
-            /home/runner/gtm-work/out/**
+          path: ${{ runner.temp }}/gtm-work/out/**
           if-no-files-found: warn
           retention-days: 7
 
-      - name: Report conclusion
-        if: always()
-        run: |
-          OUT="$HOME/gtm-work/out"
-          CONC=$(cat "$OUT/conclusion.txt" 2>/dev/null || echo "unknown")
-          echo "Conclusion: $CONC"
-          if [ "$CONC" = "failure" ]; then
-            exit 1
-          fi
-          if [ "$CONC" = "unsupported" ]; then
-            echo "::warning::Unsupported project type"
-          fi
+
+  cleanup:
+    name: Delete temporary source branch
+    if: always()
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Delete temporary source branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const ref = 'heads/' + ${{ toJSON(inputs.source_ref) }};
+            try {
+              await github.rest.git.deleteRef({ owner: context.repo.owner, repo: context.repo.repo, ref });
+              core.info(`Deleted temporary source branch ${ref}`);
+            } catch (error) {
+              core.warning(`Could not delete temporary source branch ${ref}: ${error.message}`);
+            }
