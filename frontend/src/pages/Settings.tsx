@@ -7,6 +7,8 @@ export default function Settings() {
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null)
   const [error, setError] = useState<string | null>(null)
 
+  const maxUploadBytes = settings?.maxUploadBytes
+
   useEffect(() => {
     Promise.all([
       api.health().catch(() => null),
@@ -47,7 +49,7 @@ export default function Settings() {
       <div className="glass" style={{ padding: '1.25rem', marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Limits & policy</h2>
         <ul style={{ listStyle: 'none', fontSize: '0.9rem', color: 'var(--text-secondary)' }}>
-          <li>Max upload size: {(settings?.maxUploadBytes as number) ? `${Number(settings.maxUploadBytes) / (1024 * 1024)} MB` : '100 MB (default)'}</li>
+          <li>Max upload size: {typeof maxUploadBytes === 'number' && maxUploadBytes > 0 ? `${maxUploadBytes / (1024 * 1024)} MB` : '100 MB (default)'}</li>
           <li>Default build timeout: {(settings?.defaultTimeoutMinutes as number) || 30} minutes</li>
           <li>Artifact retention: {(settings?.artifactRetentionDays as number) || 7} days</li>
           <li>Rate limit: {(settings?.rateLimitPerMinute as number) || 10} requests / minute / IP (when configured)</li>
