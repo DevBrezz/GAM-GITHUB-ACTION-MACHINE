@@ -20,12 +20,10 @@ jobs:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
+          node-version: '24'
       - run: npm install
       - run: npm run typecheck
       - run: npm run build
@@ -37,12 +35,10 @@ jobs:
       run:
         working-directory: worker
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
-          node-version: '20'
-          cache: npm
-          cache-dependency-path: worker/package-lock.json
+          node-version: '24'
       - run: npm install
       - run: npm run typecheck
 
@@ -50,9 +46,10 @@ jobs:
     name: Repository structure
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Verify critical paths
         run: |
+          set -eu
           test -f README.md
           test -f LICENSE
           test -f .env.example
