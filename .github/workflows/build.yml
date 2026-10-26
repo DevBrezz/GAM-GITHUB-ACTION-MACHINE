@@ -1,0 +1,262 @@
+# GitHub Action Machine — User Project Build Runner
+# Author: KingBrezz
+# Triggered via workflow_dispatch from the GTM Worker API.
+# This workflow does NOT run on every push of the GTM repo itself.
+
+name: GTM User Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_id:
+        description: 'GTM Build ID'
+        required: true
+        type: string
+      source_key:
+        description: 'R2 object key for source ZIP'
+        required: true
+        type: string
+      profile:
+        description: 'Build profile (auto, node, java-gradle, ...)'
+        required: false
+        default: 'auto'
+        type: string
+      custom_command:
+        description: 'Optional custom build command'
+        required: false
+        default: ''
+        type: string
+      timeout_minutes:
+        description: 'Timeout minutes'
+        required: false
+        default: '30'
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: gtm-build-${{ inputs.build_id }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ inputs.build_id }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ fromJSON(inputs.timeout_minutes || '30') }}
+    env:
+      BUILD_ID: ${{ inputs.build_id }}
+      PROFILE: ${{ inputs.profile }}
+      CUSTOM_COMMAND: ${{ inputs.custom_command }}
+      SOURCE_KEY: ${{ inputs.source_key }}
+    steps:
+      - name: Checkout runner helpers
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            scripts
+          sparse-checkout-cone-mode: false
+
+      - name: Setup workspace
+        run: |
+          mkdir -p "$HOME/gtm-work/src" "$HOME/gtm-work/out"
+          echo "BUILD_ID=$BUILD_ID" >> "$GITHUB_ENV"
+          echo "Workspace ready for build $BUILD_ID"
+
+      # Source download: in production the Worker provides a short-lived signed URL
+      # via a secret or the workflow uses a dedicated download step.
+      # Here we document the expected interface; operators must wire R2 signed URL or
+      # a private download endpoint protected by ADMIN_API_KEY.
+      - name: Download source ZIP
+        env:
+          DOWNLOAD_URL: ${{ secrets.GTM_SOURCE_DOWNLOAD_BASE }}
+          ADMIN_KEY: ${{ secrets.GTM_ADMIN_API_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${DOWNLOAD_URL:-}" ]; then
+            echo "::warning::GTM_SOURCE_DOWNLOAD_BASE secret not set. Skipping real download."
+            echo "UNSUPPORTED: source download not configured" > "$HOME/gtm-work/out/status.txt"
+            echo "unsupported" > "$HOME/gtm-work/out/conclusion.txt"
+            exit 0
+          fi
+          curl -fsSL -H "X-Admin-Key: ${ADMIN_KEY:-}" \
+            "${DOWNLOAD_URL%/}/internal/source?key=${SOURCE_KEY}&build_id=${BUILD_ID}" \
+            -o "$HOME/gtm-work/source.zip"
+          unzip -q "$HOME/gtm-work/source.zip" -d "$HOME/gtm-work/src"
+          echo "Source extracted"
+
+      - name: Detect project & build
+        working-directory: ${{ runner.temp }}
+        run: |
+          set -euo pipefail
+          SRC="$HOME/gtm-work/src"
+          OUT="$HOME/gtm-work/out"
+          mkdir -p "$OUT"
+          cd "$SRC" || { echo "No source directory"; echo "failure" > "$OUT/conclusion.txt"; exit 1; }
+
+          detect() {
+            if [ -f "gradlew" ] || [ -f "build.gradle" ] || [ -f "build.gradle.kts" ]; then
+              if [ -d "app" ] && grep -q "com.android" build.gradle* 2>/dev/null; then
+                echo "android"
+              else
+                echo "java-gradle"
+              fi
+            elif [ -f "pom.xml" ] || [ -f "mvnw" ]; then
+              echo "java-maven"
+            elif [ -f "package.json" ]; then
+              echo "node"
+            elif [ -f "go.mod" ]; then
+              echo "go"
+            elif [ -f "Cargo.toml" ]; then
+              echo "rust"
+            elif [ -f "pyproject.toml" ] || [ -f "requirements.txt" ] || [ -f "setup.py" ]; then
+              echo "python"
+            elif [ -f "composer.json" ]; then
+              echo "php"
+            elif ls *.sln *.csproj 1>/dev/null 2>&1; then
+              echo "dotnet"
+            elif [ -f "CMakeLists.txt" ] || [ -f "Makefile" ]; then
+              echo "cmake"
+            else
+              echo "unknown"
+            fi
+          }
+
+          DETECTED=$(detect)
+          if [ "$PROFILE" != "auto" ] && [ -n "$PROFILE" ]; then
+            DETECTED="$PROFILE"
+          fi
+          echo "project_type=$DETECTED" >> "$OUT/meta.env"
+          echo "Detected: $DETECTED"
+
+          run_build() {
+            local cmd="$1"
+            echo "Running: $cmd"
+            echo "command=$cmd" >> "$OUT/meta.env"
+            set +e
+            bash -lc "$cmd" 2>&1 | tee "$OUT/build.log"
+            local ec=${PIPESTATUS[0]}
+            set -e
+            echo "$ec" > "$OUT/exit_code.txt"
+            return $ec
+          }
+
+          SUCCESS=0
+          case "$DETECTED" in
+            node)
+              if [ -f "pnpm-lock.yaml" ]; then
+                corepack enable && corepack prepare pnpm@latest --activate
+                run_build "pnpm install --frozen-lockfile && pnpm run build" || SUCCESS=$?
+              elif [ -f "yarn.lock" ]; then
+                corepack enable
+                run_build "yarn install --frozen-lockfile && yarn build" || SUCCESS=$?
+              else
+                run_build "npm ci || npm install; npm run build --if-present" || SUCCESS=$?
+              fi
+              ;;
+            java-gradle|android)
+              chmod +x gradlew 2>/dev/null || true
+              if [ -n "${CUSTOM_COMMAND:-}" ]; then
+                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
+              else
+                run_build "./gradlew --no-daemon build" || SUCCESS=$?
+              fi
+              ;;
+            java-maven)
+              if [ -n "${CUSTOM_COMMAND:-}" ]; then
+                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
+              else
+                run_build "mvn -B -DskipTests package" || SUCCESS=$?
+              fi
+              ;;
+            python)
+              run_build "python3 -m pip install -U pip; [ -f requirements.txt ] && pip install -r requirements.txt; [ -f pyproject.toml ] && pip install . || true; python3 -m compileall -q ." || SUCCESS=$?
+              ;;
+            go)
+              run_build "go build -o $OUT/bin ./..." || SUCCESS=$?
+              ;;
+            rust)
+              run_build "cargo build --release" || SUCCESS=$?
+              ;;
+            php)
+              run_build "composer install --no-interaction --prefer-dist && composer test --if-present || true" || SUCCESS=$?
+              ;;
+            dotnet)
+              run_build "dotnet restore && dotnet build -c Release" || SUCCESS=$?
+              ;;
+            cmake)
+              run_build "mkdir -p build && cd build && cmake .. && cmake --build ." || SUCCESS=$?
+              ;;
+            custom)
+              if [ -z "${CUSTOM_COMMAND:-}" ]; then
+                echo "custom profile requires custom_command"
+                SUCCESS=1
+              else
+                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
+              fi
+              ;;
+            unknown|*)
+              if [ -n "${CUSTOM_COMMAND:-}" ]; then
+                run_build "$CUSTOM_COMMAND" || SUCCESS=$?
+              else
+                echo "UNSUPPORTED_PROJECT: could not detect toolchain and no custom command"
+                echo "unsupported" > "$OUT/conclusion.txt"
+                exit 0
+              fi
+              ;;
+          esac
+
+          if [ $SUCCESS -eq 0 ]; then
+            echo "success" > "$OUT/conclusion.txt"
+          else
+            echo "failure" > "$OUT/conclusion.txt"
+          fi
+          echo "Exit code: $SUCCESS"
+
+      - name: Collect artifacts
+        if: always()
+        run: |
+          set -euo pipefail
+          OUT="$HOME/gtm-work/out"
+          SRC="$HOME/gtm-work/src"
+          mkdir -p "$OUT/artifacts"
+          # Common patterns
+          find "$SRC" -type f \( \
+            -name "*.jar" -o -name "*.war" -o -name "*.apk" -o -name "*.aab" \
+            -o -name "*.whl" -o -name "*.tar.gz" -o -name "*.tgz" \
+            -o -name "*.exe" -o -name "*.dll" -o -name "*.so" \
+            -o -name "*.zip" \
+          \) ! -path "*/node_modules/*" ! -path "*/.git/*" 2>/dev/null | head -50 | while read -r f; do
+            cp -n "$f" "$OUT/artifacts/" 2>/dev/null || true
+          done
+          # Node dist
+          if [ -d "$SRC/dist" ]; then
+            tar -czf "$OUT/artifacts/dist.tar.gz" -C "$SRC" dist || true
+          fi
+          ls -la "$OUT/artifacts" || true
+          echo "Artifacts staged"
+
+      - name: Upload artifacts to GitHub Actions
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gtm-${{ inputs.build_id }}
+          path: |
+            ${{ runner.temp }}/../gtm-work/out/**
+            /home/runner/gtm-work/out/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Report conclusion
+        if: always()
+        run: |
+          OUT="$HOME/gtm-work/out"
+          CONC=$(cat "$OUT/conclusion.txt" 2>/dev/null || echo "unknown")
+          echo "Conclusion: $CONC"
+          if [ "$CONC" = "failure" ]; then
+            exit 1
+          fi
+          if [ "$CONC" = "unsupported" ]; then
+            echo "::warning::Unsupported project type"
+          fi

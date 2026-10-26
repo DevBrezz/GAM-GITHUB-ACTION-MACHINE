@@ -1,0 +1,65 @@
+# CI for GitHub Action Machine itself
+# Author: KingBrezz
+
+name: GTM CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: read
+
+jobs:
+  frontend:
+    name: Frontend build & typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm install
+      - run: npm run typecheck
+      - run: npm run build
+
+  worker:
+    name: Worker typecheck
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: worker/package-lock.json
+      - run: npm install
+      - run: npm run typecheck
+
+  structure:
+    name: Repository structure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify critical paths
+        run: |
+          test -f README.md
+          test -f LICENSE
+          test -f .env.example
+          test -f .github/workflows/build.yml
+          test -f .github/workflows/ci.yml
+          test -d frontend/src
+          test -d worker/src
+          test -f worker/src/index.ts
+          test -f docs/API.md
+          echo "Structure OK"
