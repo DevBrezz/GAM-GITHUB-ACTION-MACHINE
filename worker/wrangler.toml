@@ -1,0 +1,24 @@
+name = "gtm-api"
+main = "src/index.ts"
+compatibility_date = "2024-09-23"
+compatibility_flags = ["nodejs_compat"]
+
+# === Bindings (configure with your Cloudflare account) ===
+# [[r2_buckets]]
+# binding = "ARTIFACTS"
+# bucket_name = "gtm-artifacts"
+
+# [[kv_namespaces]]
+# binding = "BUILDS"
+# id = "your-kv-namespace-id"
+
+# [vars]
+# GITHUB_OWNER = "your-org"
+# GITHUB_REPO = "your-build-repo"
+# MAX_UPLOAD_BYTES = "104857600"
+# ARTIFACT_RETENTION_DAYS = "7"
+# DEFAULT_TIMEOUT_MINUTES = "30"
+
+# Secrets (set via `wrangler secret put`):
+# GITHUB_TOKEN
+# ADMIN_API_KEY (optional)
