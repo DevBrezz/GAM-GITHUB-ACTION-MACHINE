@@ -113,7 +113,9 @@ async function handleCreateBuild(request: Request, env: Env, ctx: ExecutionConte
   const metaRaw = form.get('meta')
   const meta = parseMeta(typeof metaRaw === 'string' ? metaRaw : null)
 
-  if (!(file instanceof File)) {
+  // FormDataEntryValue is string | File; narrow by type instead of relying on
+  // a global File constructor, which is not available in every Workers type lib.
+  if (file === null || typeof file === 'string') {
     return error('Missing file field', 400, 'MISSING_FILE')
   }
 
