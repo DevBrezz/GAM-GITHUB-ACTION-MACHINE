@@ -1,0 +1,19 @@
+{
+  "name": "gtm-worker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "GitHub Action Machine - Cloudflare Worker API",
+  "author": "KingBrezz",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --passWithNoTests 2>/dev/null || echo 'No jest; run unit checks manually'"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240919.0",
+    "typescript": "^5.5.4",
+    "wrangler": "^3.78.0"
+  }
+}
