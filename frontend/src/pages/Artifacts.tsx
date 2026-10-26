@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
-import type { Build, Artifact } from '../types'
+import type { Artifact } from '../types'
 
 interface ArtifactRow extends Artifact {
   buildId: string
