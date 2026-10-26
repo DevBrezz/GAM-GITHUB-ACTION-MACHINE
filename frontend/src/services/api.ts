@@ -1,5 +1,4 @@
 import type {
-  Build,
   BuildListResponse,
   CreateBuildRequest,
   CreateBuildResponse,
