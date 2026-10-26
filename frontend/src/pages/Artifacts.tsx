@@ -11,6 +11,7 @@ export default function Artifacts() {
   const [rows, setRows] = useState<ArtifactRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
   useEffect(() => {
     api
@@ -34,11 +35,17 @@ export default function Artifacts() {
       .finally(() => setLoading(false))
   }, [])
 
+  const downloadArtifact = async (artifactId: string, name: string) => {
+    setDownloadError(null)
+    try { await api.downloadArtifact(artifactId, name) }
+    catch (e) { setDownloadError(e instanceof Error ? e.message : 'Artifact download failed') }
+  }
+
   return (
     <div>
       <h1 style={{ marginBottom: '1rem' }}>Artifacts</h1>
       <p style={{ color: 'var(--text-secondary)', marginBottom: '1rem', fontSize: '0.9rem' }}>
-        Artifacts from successful builds. Retention is controlled by backend policy (default 7 days).
+        Artifacts from successful GitHub Actions runs. GitHub retains these artifacts for 7 days.
       </p>
 
       {error && (
@@ -47,6 +54,7 @@ export default function Artifacts() {
         </div>
       )}
 
+      {downloadError && <div className="glass" style={{ padding: '0.75rem', marginBottom: '1rem', color: 'var(--danger)' }}>{downloadError}</div>}
       <div className="glass" style={{ padding: '1rem' }}>
         {loading && <div className="empty-state">Loading…</div>}
         {!loading && rows.length === 0 && (
@@ -81,9 +89,9 @@ export default function Artifacts() {
                     {new Date(a.createdAt).toLocaleString()}
                   </td>
                   <td style={{ padding: '0.6rem 0.5rem' }}>
-                    <a className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.25rem 0.6rem' }} href={api.getArtifactDownloadUrl(a.id)}>
-                      Download
-                    </a>
+                    <button className="btn btn-secondary" style={{ fontSize: '0.8rem', padding: '0.25rem 0.6rem' }} onClick={() => void downloadArtifact(a.id, a.name)}>
+                      Download ZIP
+                    </button>
                   </td>
                 </tr>
               ))}

@@ -11,6 +11,7 @@ export default function BuildDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [autoScroll, setAutoScroll] = useState(true)
+  const [downloadError, setDownloadError] = useState<string | null>(null)
   const logRef = useRef<HTMLPreElement>(null)
   const pollRef = useRef<number | null>(null)
 
@@ -54,6 +55,12 @@ export default function BuildDetail() {
       logRef.current.scrollTop = logRef.current.scrollHeight
     }
   }, [logs, autoScroll])
+
+  const downloadArtifact = async (artifactId: string, name: string) => {
+    setDownloadError(null)
+    try { await api.downloadArtifact(artifactId, name) }
+    catch (e) { setDownloadError(e instanceof Error ? e.message : 'Artifact download failed') }
+  }
 
   const copyText = async (text: string) => {
     try {
@@ -128,18 +135,20 @@ export default function BuildDetail() {
             {build.artifacts.map((a) => (
               <li key={a.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.4rem 0', borderBottom: '1px solid var(--border)' }}>
                 <span>{a.name} {a.size != null ? `(${(a.size / 1024).toFixed(1)} KB)` : ''}</span>
-                <a
+                <button
                   className="btn btn-secondary"
-                  href={api.getArtifactDownloadUrl(a.id)}
+                  onClick={() => void downloadArtifact(a.id, a.name)}
                   style={{ fontSize: '0.8rem', padding: '0.3rem 0.7rem' }}
                 >
-                  Download
-                </a>
+                  Download ZIP
+                </button>
               </li>
             ))}
           </ul>
         </div>
       )}
+
+      {downloadError && <div className="glass" style={{ padding: '0.75rem', marginBottom: '1rem', color: 'var(--danger)' }}>{downloadError}</div>}
 
       <div className="glass" style={{ padding: '1rem' }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.75rem', alignItems: 'center' }}>

@@ -2,7 +2,7 @@ import { useState, useRef, useCallback } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { api } from '../services/api'
 
-const MAX_SIZE = 100 * 1024 * 1024 // 100 MB
+const MAX_SIZE = 20 * 1024 * 1024 // 20 MB; GitHub Contents API direct upload limit used by GTM
 const PROFILES = [
   { id: 'auto', label: 'Auto-detect' },
   { id: 'node', label: 'Node.js / npm / pnpm / yarn' },
@@ -86,7 +86,7 @@ export default function NewBuild() {
     <div>
       <h1 style={{ marginBottom: '0.25rem' }}>New Build</h1>
       <p style={{ color: 'var(--text-secondary)', marginBottom: '1.5rem' }}>
-        Upload a project ZIP. The build runs on an isolated GitHub Actions runner.
+        Upload a project ZIP. The build runs on a GitHub-hosted Actions runner. Connect your private runner repository in Settings first.
       </p>
 
       <form onSubmit={handleSubmit} className="glass" style={{ padding: '1.5rem', maxWidth: 640 }}>
@@ -122,7 +122,7 @@ export default function NewBuild() {
           ) : (
             <div style={{ color: 'var(--text-secondary)' }}>
               <div style={{ marginBottom: '0.5rem' }}>Drag & drop a .zip file here</div>
-              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>or click to browse (max 100 MB)</div>
+              <div style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>or click to browse (max 20 MB)</div>
             </div>
           )}
         </div>
@@ -151,7 +151,7 @@ export default function NewBuild() {
           style={{ width: '100%', marginBottom: '1rem', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}
         />
         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-          Custom commands run only on the GitHub Actions runner. Never inject untrusted input into shell on the Worker.
+          Custom commands run only on the GitHub Actions runner. Build commands execute on the runner. Only build source you trust; this is not a perfect sandbox.
         </p>
 
         <label style={{ display: 'block', marginBottom: '0.35rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>

@@ -1,24 +1,21 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../services/api'
-import type { Build, HealthResponse } from '../types'
+import type { Build } from '../types'
 import StatusBadge from '../components/StatusBadge'
 
 export default function Overview() {
   const [builds, setBuilds] = useState<Build[]>([])
-  const [health, setHealth] = useState<HealthResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     Promise.all([
-      api.listBuilds(1, 10).catch(() => ({ builds: [], total: 0, page: 1, pageSize: 10 })),
-      api.health().catch(() => null),
-    ]).then(([list, h]) => {
+      api.listBuilds(1, 10).then((value) => value).catch((e) => { throw e }),
+    ]).then(([list]) => {
       if (!cancelled) {
         setBuilds(list.builds)
-        setHealth(h)
         setLoading(false)
       }
     }).catch((e) => {
@@ -46,7 +43,7 @@ export default function Overview() {
 
       {error && (
         <div className="glass" style={{ padding: '1rem', marginBottom: '1rem', borderColor: 'var(--danger)' }}>
-          Backend unreachable: {error}. Configure <code>VITE_API_BASE_URL</code> and deploy the Worker.
+          GitHub connection unavailable: {error}. Open Settings, connect a fine-grained token, and configure the private runner repository.
         </div>
       )}
 
@@ -64,18 +61,6 @@ export default function Overview() {
         ))}
       </div>
 
-      {health && (
-        <div className="glass" style={{ padding: '1rem', marginBottom: '1.5rem' }}>
-          <h3 style={{ fontSize: '0.9rem', marginBottom: '0.5rem' }}>Backend status</h3>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: '1rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
-            <span>Version: {health.version}</span>
-            <span>Author: {health.author}</span>
-            <span>GitHub: {health.configured.github ? 'Configured' : 'NOT CONFIGURED'}</span>
-            <span>R2: {health.configured.r2 ? 'Bound' : 'NOT CONFIGURED'}</span>
-            <span>KV: {health.configured.kv ? 'Bound' : 'NOT CONFIGURED'}</span>
-          </div>
-        </div>
-      )}
 
       <div className="glass" style={{ padding: '1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
